@@ -42,18 +42,19 @@ def create_folder_structure():
 
     print(f"Структура папок успешно создана в: {os.path.join(base_path, 'data')}")
 
-
-def excel_to_mongodb_with_processing(excel_file_name, database_name, collection_name, mongo_uri="mongodb://localhost:27017/"):
+def excel_to_mongodb_with_processing(excel_file, links_csv_file, database_name, collection_name, mongo_uri="mongodb://localhost:27017/"):
     """
     Перенос данных из Excel-файла в коллекцию MongoDB с добавлением поля с локальным путем в файловой системе, а также ссылкой на скачивание.
 
-    :param excel_file_name: Имя Excel-файла.
+    :param excel_file: Путь к Excel-файлу.
+    :param links_csv_file: Путь к CSV файлу с прямыми ссылками.
     :param database_name: Название базы данных MongoDB.
     :param collection_name: Название коллекции MongoDB.
     :param mongo_uri: URI для подключения к MongoDB (по умолчанию локальный сервер).
     """
 
-    df = pd.read_excel(excel_file_name)
+    df = pd.read_excel(excel_file)
+    direct_links_csv = pd.read_csv(links_csv_file)
 
     # Добавление колонки с адресом расположения в файловой системе локальной машины
     def generate_local_path(row):
@@ -62,6 +63,36 @@ def excel_to_mongodb_with_processing(excel_file_name, database_name, collection_
 
     df['Локальный путь'] = df.apply(generate_local_path, axis=1)
 
+
+    # Добавление ссылок из CSV файла в новые поля
+    phase_columns = [
+        "Файл c нативной фазой", "Файл с разметкой нативной фазы",
+        "Файл c артериальной фазой", "Файл c разметкой артериальной фазы",
+        "Файл c венозной фазой", "Файл c разметкой венозной фазы",
+        "Файл c отсроченной фазой", "Файл c разметкой отсроченной фазы"
+    ]
+    for phase_column in phase_columns:
+        link_column_name = f"Ссылка на {phase_column}"
+        df[link_column_name] = pd.Series(dtype="object") #np.nan
+
+
+    for idx, row in df.iterrows():
+        patient_id = row["ID пациента"]
+
+        for phase_column in phase_columns:
+            if pd.notna(row[phase_column]):  # Проверка на непустое значение
+                file_name = row[phase_column]
+
+                match = direct_links_csv[    # Ищем совпадение в csv-файле
+                    (direct_links_csv["ID"] == patient_id) &
+                    (direct_links_csv["file_name"] == file_name)
+                    ]
+                if not match.empty:
+                    link_column_name = f"Ссылка на {phase_column}"
+                    df.at[idx, link_column_name] = match.iloc[0]["link"]
+
+
+
     # Подключение к MongoDB
     client = MongoClient(mongo_uri)
     db = client[database_name]
@@ -69,8 +100,6 @@ def excel_to_mongodb_with_processing(excel_file_name, database_name, collection_
 
     # Преобразование данных DataFrame в список записей
     data = df.to_dict(orient='records')
-
-
 
     # Проверка наличия записей и добавление новых по полям "ID пациента" + "Локализация надпочечника (слева/справа)"
     new_records_count = 0   # Счётчик добавленных записей
@@ -82,11 +111,13 @@ def excel_to_mongodb_with_processing(excel_file_name, database_name, collection_
         if not collection.find_one(query):
             collection.insert_one(record)
             new_records_count += 1
+        # else:
+        #     collection.update_one(query, {"$set": record})  # Обновление существующих записей
 
 
     print(f"Данные успешно загружены в MongoDB.")
-    print(f"Добавлено новых записей: {new_records_count}.")
-    print(f"Общее количество записей в коллекции '{collection_name}': {collection.count_documents({})}.")
+    print(f"Добавлено новых записей: {new_records_count}")
+    print(f"Общее количество записей: {collection.count_documents({})}")
 
 
 def check_images_in_excel(image_dir, excel_file, column_d='Файл c нативной фазой', column_t='Присутствует в папке "Все картинки"'):
@@ -592,21 +623,23 @@ if __name__ == "__main__":
             # Создаем иерархию папок на локальной машине для хранения и дальнейших преобразований mp4-файлов
             create_folder_structure()
 
-        case 'converting excel to mongo':
+        case 'create MongoDB database':
             ''' 1. Предварительно установите MongoDBCompass, создайте БД и коллекцию'''
 
-            excel_path = os.path.join(os.path.dirname(__file__), r'База данных МСКТ надпочечников_MP4.xlsx')
+            excel_base_path = os.path.join(os.path.dirname(__file__), r'База данных МСКТ надпочечников_MP4.xlsx')
 
-            # Создание CSV файла с прямыми ссылками на скачивание файлов из Excel файла
-            create_direct_links_csv(excel_path, sheet_name='Лист1', output_csv='direct_links.csv')
+            # Создание CSV файла с прямыми ссылками на скачивание файлов из Excel файла. Время формирования = 3.8 записи/сек
+            create_direct_links_csv(excel_base_path, sheet_name='Лист1', output_csv='direct_links.csv')
+            links_csv_path = os.path.join(os.path.dirname(__file__), r'direct_links.csv')
 
-            # Преобразовываем данные из сырого ХД (excel-файл) в MongoDB, добавляя поле с путем до файла на локальной машине, а также ссылкой на скачивание
-            # excel_to_mongodb_with_processing(
-            #     excel_file_name=excel_path,
-            #     database_name="Adrenal_CT",
-            #     collection_name="Data")
+            # Преобразовываем данные из сырого ХД (excel-файл) в MongoDB, добавляя поле с путем до файла на локальной машине, а также поле с ссылкой на скачивание каждого файла
+            excel_to_mongodb_with_processing(
+                excel_file=excel_base_path,
+                links_csv_file=links_csv_path,
+                database_name="Adrenal_CT",
+                collection_name="Data")
 
-        case 3:
+        case '':
             print("Вы выбрали третий вариант.")
         case _:
             print("Неизвестный выбор.")
