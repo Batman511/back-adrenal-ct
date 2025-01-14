@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 from pymongo import MongoClient
 from linked_csv import *
+from download_test import download_file_from_csv
 
 def create_folder_structure():
     """
@@ -52,7 +53,6 @@ def excel_to_mongodb_with_processing(excel_file, links_csv_file, database_name, 
     :param collection_name: Название коллекции MongoDB.
     :param mongo_uri: URI для подключения к MongoDB (по умолчанию локальный сервер).
     """
-
     df = pd.read_excel(excel_file)
     direct_links_csv = pd.read_csv(links_csv_file)
 
@@ -119,145 +119,14 @@ def excel_to_mongodb_with_processing(excel_file, links_csv_file, database_name, 
     print(f"Добавлено новых записей: {new_records_count}")
     print(f"Общее количество записей: {collection.count_documents({})}")
 
-
-def check_images_in_excel(image_dir, excel_file, column_d='Файл c нативной фазой', column_t='Присутствует в папке "Все картинки"'):
+def display_video(video_path, file_name='', frame_skip=5, wait_key=200):
     """
-    Функция проверяет, присутствуют ли имена картинок из папки в Excel-файле и обновляет Excel:
-    - Если имя картинки найдено в столбце D, ставит 1 в столбце T.
-    - Картинки, не найденные в Excel, записывает в отдельный список.
+    Воспроизведение каждого {frame_skip} кадра видео, находящегося по пути {video_path}, с задержкой {wait_key} мс между кадрами.
 
-    Возвращает:
-        missing_images (list): Список картинок, которые не найдены в Excel-файле.
-    """
-
-    # Проверка существования пути к папке с изображениями
-    if not os.path.isdir(image_dir):
-        print(f"Ошибка: Путь к папке с изображениями '{image_dir}' не существует.")
-        return []
-
-    # Проверка существования Excel-файла
-    if not os.path.isfile(excel_file):
-        print(f"Ошибка: Excel-файл '{excel_file}' не найден.")
-        return []
-
-    # Попытка загрузить Excel-файл
-    try:
-        df = pd.read_excel(excel_file)
-    except Exception as e:
-        print(f"Ошибка при открытии Excel-файла: {e}")
-        return []
-
-    # Проверка наличия столбцов
-    if column_d not in df.columns or column_t not in df.columns:
-        print(f"Ошибка: В Excel-файле нет столбцов '{column_d}' или '{column_t}'.")
-        return []
-
-    # Преобразуем имена картинок из столбца D в список для удобства поиска
-    excel_images = df[column_d].astype(str).tolist()
-
-    # Список картинок, которые не найдены в Excel
-    missing_images = []
-
-    # Проходим по всем картинкам в папке
-    for image_name in os.listdir(image_dir):
-        # Убираем расширение файла (например, .jpg или .png) для сравнения
-        image_base_name = os.path.splitext(image_name)[0]
-
-        if image_base_name in excel_images:
-            # Если имя картинки найдено, ставим 1 в столбец T
-            df.loc[df[column_d] == image_base_name, column_t] = 1
-        else:
-            # Если не найдено, добавляем в список
-            missing_images.append(image_name)
-
-    # Попытка сохранить Excel-файл
-    try:
-        df.to_excel(excel_file, index=False)
-    except Exception as e:
-        print(f"Ошибка при сохранении Excel-файла: {e}")
-        return []
-
-    return missing_images
-
-def delete_videos(video_dir, video_list):
-    """
-    Удаляет видеофайлы из папки {video_dir} по названиям, которые переданы в списке {video_list}.
-    """
-    for video_name in video_list:
-        video_path = os.path.join(video_dir, video_name)
-        if os.path.exists(video_path):
-            try:
-                os.remove(video_path)
-                print(f"Удалено: {video_path}")
-            except OSError as e:
-                print(f"Ошибка при удалении {video_path}: {e}")
-        else:
-            print(f"Файл не найден: {video_path}")
-
-
-# С этим пока проблема. Не может загрузить файл по ссылке, с API Яндекс.Диска тоже не вышло.
-def test_download_and_display_single_video(excel_file, column_names):
-    """
-    Функция для тестирования: загружает и отображает видеофайл с Яндекс.Диска по ссылке из excel-файла.
-    """
-
-    df = pd.read_excel(excel_file)
-    row = df.iloc[1]
-    base_link = row['Местоположение файлов']
-
-    for col_name in column_names:
-        file_name = f"{row[col_name]}.mp4"
-        full_video_link = f"{base_link}/{file_name}"  # Полная ссылка
-        print(f"Полная ссылка на видео: {full_video_link}")
-
-        # Загрузка видео по прямой ссылки
-        try:
-            print(f"Загрузка файла: {file_name}")
-
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            response = requests.get(full_video_link, headers=headers, stream=True)
-
-
-            if response.status_code == 200:
-                # Сохранение загруженного видео во временный файл
-                temp_file = 'temp_video.mp4'
-                with open(temp_file, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-
-                file_size = os.path.getsize(temp_file)
-                print(f"Размер загруженного файла: {file_size} байт")
-
-                if file_size == 0:
-                    print(f"Ошибка: загруженный файл {file_name} пуст.")
-                    continue
-
-                # Открываем временный видеофайл и показываем первый кадр
-                cap = cv2.VideoCapture(temp_file)
-                if not cap.isOpened():
-                    print(f"Не удалось открыть видеофайл: {temp_file}")
-                    continue
-
-                ret, frame = cap.read()
-                if ret:
-                    cv2.imshow(f'Первый кадр видео: {file_name}', frame)
-                    cv2.waitKey(0)
-                    cv2.destroyAllWindows()
-                else:
-                    print(f"Не удалось прочитать первый кадр из видео: {file_name}")
-
-                # Освобождаем ресурсы
-                cap.release()
-            else:
-                print(f"Ошибка при загрузке файла: {response.status_code}")
-                continue
-        except Exception as e:
-            print(f"Ошибка загрузки файла: {e}")
-            continue
-
-def display_video(video_path, frame_skip=5, wait_key=200):
-    """
-    Функция для воспроизведения каждого {frame_skip} кадра видео с путем {video_path} с задержкой  {wait_key} мс.
+    :param video_path: Путь к видеофайлу.
+    :param file_name: Имя файла (при необходимости).
+    :param frame_skip: Количество кадров, которые будут пропускаться между отображаемыми (по умолчанию 5).
+    :param wait_key: Время задержки в миллисекундах между отображением кадров (по умолчанию 200 мс).
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -265,7 +134,7 @@ def display_video(video_path, frame_skip=5, wait_key=200):
         return
 
     frame_count = 0  # Счётчик кадров
-    window_name = 'Display_video'
+    window_name = f'Display_video {file_name}'
 
 
     while cap.isOpened():
@@ -617,7 +486,7 @@ def load_videos_from_mongo(db_name, collection_name, data_dir, target_size=(240,
 
 if __name__ == "__main__":
 
-    choice = 'converting excel to mongo'
+    choice = 'test download file by name'
     match choice:
         case 'create local structure':
             # Создаем иерархию папок на локальной машине для хранения и дальнейших преобразований mp4-файлов
@@ -639,8 +508,13 @@ if __name__ == "__main__":
                 database_name="Adrenal_CT",
                 collection_name="Data")
 
-        case '':
-            print("Вы выбрали третий вариант.")
+        case 'test download file by name':
+            file_name = "ID53_ARTERIAL" # название файла для скачивания без типа
+
+            # Проверка того, что прямые ссылки из csv-файла рабочие, а файлы скачиваются корректно
+            download_file_from_csv(file_name, download_folder='ct_download')
+            links_test_download_file = os.path.join(os.path.dirname(__file__), 'ct_download', f'{file_name}.mp4')
+            display_video(links_test_download_file, file_name=file_name) # для закрытия нажимать 'q'
         case _:
             print("Неизвестный выбор.")
 
