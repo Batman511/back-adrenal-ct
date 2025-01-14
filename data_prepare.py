@@ -156,8 +156,74 @@ def display_video(video_path, file_name='', frame_skip=5, wait_key=200):
     cap.release()
     cv2.destroyAllWindows()
 
+def download_file(file_name, download_link, download_folder):
+    """
+    Скачивает файл по указанной ссылке.
+
+    :param file_name: Название файла для сохранения.
+    :param download_link: Ссылка для скачивания файла.
+    :param download_folder: Папка, в которую сохраняется файл.
+    """
+    if not file_name.endswith('.mp4'):
+        file_name += '.mp4'
+
+    if not os.path.exists(download_folder):
+        # os.makedirs(download_folder)
+        print("Такой папки нет!")
+        return
 
 
+    file_path = os.path.join(download_folder, file_name)
+    response = requests.get(download_link)
+    if response.status_code == 200:
+        with open(file_path, 'wb') as output_file:
+            output_file.write(response.content)
+        # print(f"Файл {file_name} успешно скачан в папку {download_folder}.")
+    else:
+        print(f"Ошибка при скачивании файла {file_name}: {response.status_code} — {response.text}")
+
+def download_files_from_mongo(db_name, collection_name, columns_to_download, mongo_uri="mongodb://localhost:27017/"):
+    """
+    Проверяет наличие файлов по локальному пути в MongoDB и скачивает отсутствующие.
+
+    :param db_name: Имя базы данных MongoDB.
+    :param collection_name: Имя коллекции MongoDB.
+    :param columns_to_download: Список полей MongoDB, являющийся списком с фазами, которые нужно скачать.
+    :param mongo_uri: URI для подключения к MongoDB.
+    """
+    print(f"Скачивание новых файлов начато...")
+
+    client = MongoClient(mongo_uri)
+    db = client[db_name]
+    collection = db[collection_name]
+
+    base_path = os.path.dirname(__file__)
+    downloaded_count = 0  # Счетчик скачанных файлов
+
+    for record in collection.find():
+        for column in columns_to_download:
+            relative_local_path = record.get("Локальный путь", "")
+            local_path = os.path.join(base_path, relative_local_path)
+
+            file_name = record.get(column, "")
+            if local_path and file_name:
+                full_file_path = os.path.join(local_path, f"{file_name}.mp4")
+
+                # Проверка наличия файла
+                if not os.path.exists(full_file_path):
+                    download_link = record.get(f"Ссылка на {column}", "")
+
+                    if download_link:
+                        # print(f"Скачиваем файл {file_name}")
+                        download_file(file_name, download_link, local_path)
+                        downloaded_count += 1
+                    else:
+                        print(f"Нет ссылки для скачивания файла {file_name}")
+
+    print(f"Скачивание завершено. Всего скачано файлов: {downloaded_count}")
+
+
+''' вряд ли понадобится, юзалось для проверки смещения'''
 def display_video_with_max_contour(video_path, frame_skip=5, wait_key=400):
     """
     Функция находит максимальный контур на каждом {frame_skip} кадре,
@@ -250,7 +316,7 @@ def display_video_with_center(video_path, frame_skip=5, wait_key=200):
 
     cap.release()
     cv2.destroyAllWindows()
-def manual_directory_check(videos_dir):
+def directory_check_with_center(videos_dir):
     """
         Функция проверяет каждое видео из {videos_dir} с использованием display_video_with_center()
     """
@@ -263,57 +329,6 @@ def manual_directory_check(videos_dir):
 
 
 
-# заполняем папку data
-def copy_videos_from_excel(excel_path, video_dir, data_dir):
-    """
-    Функция перемещает видео из папки {video_dir} в папку {data_dir}, согласно Excel-файлу.
-
-    Параметры:
-        excel_path (str): Путь к Excel-файлу
-        video_dir (str): Путь к директории, в которой хранятся исходные видео.
-        data_dir (str): Путь к корневой папке, в которой будут создаваться директории для файлов.
-
-    Возвращает:
-        list: Список файлов, которые не были найдены в video_dir.
-    """
-
-    try:
-        df = pd.read_excel(excel_path)
-    except Exception as e:
-        print(f"Ошибка при чтении файла Excel: {e}")
-        return []
-
-    not_found_files = []
-
-    # Проходим по каждой строке таблицы
-    for index, row in df.iterrows():
-        file_name = row['Файл c нативной фазой'] + '.mp4'  # Имя видео
-        target_subdir = row['Путь']
-
-
-        source_path = os.path.join(video_dir, file_name)
-        target_path = os.path.join(data_dir, target_subdir)
-
-
-        if os.path.exists(source_path):
-
-            # Полный путь к новому местоположению видео
-            target_file_path = os.path.join(target_path, file_name)
-
-            # Перемещаем файл, если его еще нет в целевой папке
-            if not os.path.exists(target_file_path):
-                try:
-                    shutil.copy2(source_path, target_file_path)
-                    print(f"Видео {file_name} успешно перемещено в {target_file_path}")
-                except Exception as e:
-                    print(f"Ошибка при перемещении {file_name}: {e}")
-            else:
-                print(f"Видео {file_name} уже находится в {target_file_path}")
-        else:
-            print(f"Видео {file_name} не найдено в {video_dir}")
-            not_found_files.append(file_name)
-
-    return not_found_files
 
 # функция для загрузки и обработки видео с уменьшением количества и размера кадров. Вот тут можно экспериментировать!!
 def load_videos(data_dir, target_size=(240, 240), frame_skip=5, add_third_dimension=False):
@@ -428,7 +443,7 @@ def load_videos_from_mongo(db_name, collection_name, data_dir, target_size=(240,
 
     # Получаем все документы из коллекции
     for document in collection.find():
-        path = document["Путь"]  # Извлекаем локальный путь из документа -> заменить на ссылку в БД S3
+        path = document["Локальный путь"]  # Извлекаем локальный путь из документа -> заменить на ссылку в БД S3
         full_path = data_dir + path
 
         if 'left_adrenal' in path:
@@ -485,8 +500,9 @@ def load_videos_from_mongo(db_name, collection_name, data_dir, target_size=(240,
 
 
 if __name__ == "__main__":
+    ''' 0. Надо прописывать команды поочередно '''
 
-    choice = 'test download file by name'
+    choice = 'download files from DB to local PC'
     match choice:
         case 'create local structure':
             # Создаем иерархию папок на локальной машине для хранения и дальнейших преобразований mp4-файлов
@@ -498,7 +514,7 @@ if __name__ == "__main__":
             excel_base_path = os.path.join(os.path.dirname(__file__), r'База данных МСКТ надпочечников_MP4.xlsx')
 
             # Создание CSV файла с прямыми ссылками на скачивание файлов из Excel файла. Время формирования = 3.8 записи/сек
-            create_direct_links_csv(excel_base_path, sheet_name='Лист1', output_csv='direct_links.csv')
+            # create_direct_links_csv(excel_base_path, sheet_name='Лист1', output_csv='direct_links.csv')
             links_csv_path = os.path.join(os.path.dirname(__file__), r'direct_links.csv')
 
             # Преобразовываем данные из сырого ХД (excel-файл) в MongoDB, добавляя поле с путем до файла на локальной машине, а также поле с ссылкой на скачивание каждого файла
@@ -515,47 +531,25 @@ if __name__ == "__main__":
             download_file_from_csv(file_name, download_folder='ct_download')
             links_test_download_file = os.path.join(os.path.dirname(__file__), 'ct_download', f'{file_name}.mp4')
             display_video(links_test_download_file, file_name=file_name) # для закрытия нажимать 'q'
+
+        case 'download files from DB to local PC':
+            # Скачиваем недостающие файлы в локальную систему
+            download_files_from_mongo(
+                db_name="Adrenal_CT",
+                collection_name="Data",
+                columns_to_download=["Файл c нативной фазой"],
+                mongo_uri="mongodb://localhost:27017/"
+                )
+
         case _:
             print("Неизвестный выбор.")
 
 
-    # create_folder_structure(r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture')
-    # test_download_and_display_single_video(r"C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\База данных МСКТ надпочечников_MP4.xlsx", column_names=['Файл c нативной фазой'])
 
-
-    # video_path = r"C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\data\class02\ID5_NATIVE_SE1.mp4"
-    # display_video(video_path,frame_skip=5, wait_key=200)
-    # display_video_with_max_contour(video_path, frame_skip=5, wait_key=500) # не работает пока
-    # display_video_with_center(video_path, frame_skip=5)
-
-    # data_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\data'
-    # videos, labels, label_names = load_videos(data_dir, target_size=(224, 224), frame_skip=5, add_third_dimension=True)
-    # print(labels, label_names)
-
-
-
-
-    # ----------------Проверяем все ли добавили при обновлении датасета (добавить в excel колонку "Присутствует в папке "Все картинки"")----------------#
-    # image_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Все видео'  # Путь к папке с картинками
-    # excel_file = r"C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\База данных МСКТ надпочечников_MP4 (1).xlsx"  # Путь к Excel-файлу
+    #     data_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\data'
+    #     videos, labels, labels_names = load_videos(data_dir)
     #
-    # missing_images = check_images_in_excel(image_dir, excel_file)
-    # # Печать картинок, которых нет в Excel
-    # print("Картинки, не найденные в Excel:", missing_images)
-
-
-
-
-
-    # ----------------Проверял смещение----------------#
-    # image_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Все картинки'
-    # manual_directory_check(image_dir)
-
-
-#     data_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\data'
-#     videos, labels, labels_names = load_videos(data_dir)
-#
-#     # Проверка результата
+    #     # Проверка результата
 #     print(f"Форма массива видео: {videos.shape}")
 #     print(f"Метки: {labels}")
 #     print(f"Имена меток: {labels_names}")
@@ -574,21 +568,6 @@ if __name__ == "__main__":
 #     cv2.destroyAllWindows()
 
 
-
-
-
-# ----------------Заполняем папку data при обновлении датасета (заполнить путь в excel)----------------#
-#     = "data/" & ЕСЛИ(M2="слева"; "left_adrenal"; "right_adrenal") & "/class_" & N2 & "_" & O2 & "_" & P2
-#     excel_path = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\База данных МСКТ надпочечников_MP4 (1).xlsx'
-#     video_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Все видео'
-#     data_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture'
-#
-#     # Вывод списка ненайденных файлов
-#     not_found_files = copy_videos_from_excel(excel_path, video_dir, data_dir)
-#     if not_found_files:
-#         print("Видео, которые не были найдены:", not_found_files)
-#     else:
-#         print("Все видео найдены и скопированы.")
 
 
 
