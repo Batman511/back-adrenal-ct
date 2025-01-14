@@ -31,6 +31,10 @@ def download_file_from_csv(file_name, csv_file='direct_links.csv', download_fold
 
             if csv_file_name == file_name:
                 file_found = True
+
+                if not file_name.endswith('.mp4'):
+                    file_name += '.mp4'
+
                 # Скачивание файла
                 response = requests.get(download_link)
                 if response.status_code == 200:
