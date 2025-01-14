@@ -58,8 +58,16 @@ def create_direct_links_csv(input_excel, sheet_name, output_csv):
                         for item in items:
                             if item['type'] == 'file':
                                 folder = item['name'].split("_")[0] if "_" in item['name'] else "Unknown"
-                                phase = item['name'].split("_")[1] if "_" in item['name'] and len(
-                                    item['name'].split("_")) > 1 else "Unknown"
+                                # Разделяем строку на основе "_" и обрабатываем последний элемент до точки
+                                if "_" in item['name']:
+                                    parts = item['name'].split("_")
+                                    if len(parts) > 1:
+                                        phase = parts[1].split(".")[0]  # Извлекаем всё до точки
+                                    else:
+                                        phase = "Unknown"
+                                else:
+                                    phase = "Unknown"
+
                                 filename = item['name']
                                 download_link = item['file'] if 'file' in item else None
 
