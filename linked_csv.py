@@ -70,7 +70,7 @@ def create_direct_links_csv(input_excel, sheet_name, output_csv):
                                 else:
                                     phase = "Unknown"
 
-                                filename = item['name']
+                                filename = item['name'][:-4]
                                 download_link = item['file'] if 'file' in item else None
 
                                 if download_link:
