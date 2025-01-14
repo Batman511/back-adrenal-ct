@@ -46,9 +46,11 @@ def create_direct_links_csv(input_excel, sheet_name, output_csv):
     """
     try:
         links = extract_links_from_excel(input_excel, sheet_name)
+        print(f"Cоздание CSV файла '{output_csv}'...")
 
         with open(output_csv, 'w', encoding="utf-8", newline="") as csv_file:
             writer = csv.writer(csv_file, delimiter=",")
+            writer.writerow(["ID", "phase", "file_name", "link"]) # Добавляем строку с названиями колонок
 
             for href in links:
                 try:
