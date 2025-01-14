@@ -3,3 +3,5 @@
 data/
 ct_download/
 *.npy
+*.xlsx
+*.csv

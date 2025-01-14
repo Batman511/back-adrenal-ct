@@ -5,10 +5,11 @@ import shutil
 import cv2
 import numpy as np
 from pymongo import MongoClient
+from linked_csv import *
 
-def create_folder_structure(base_path:str) -> None:
+def create_folder_structure():
     """
-    Создает иерархию папок для хранения mp4-файлов
+    Создает иерархию папок на локальной машине для хранения и дальнейших преобразований mp4-файлов
 
     Структура папок:
     base_path/
@@ -26,6 +27,7 @@ def create_folder_structure(base_path:str) -> None:
                 ...
                 └── class_1_1_1/
     """
+    base_path = os.path.dirname(os.path.abspath(__file__))
 
     class_combinations = [
         'class_0_0_0', 'class_0_0_1', 'class_0_1_0', 'class_0_1_1',
@@ -39,6 +41,52 @@ def create_folder_structure(base_path:str) -> None:
             os.makedirs(folder_path, exist_ok=True)
 
     print(f"Структура папок успешно создана в: {os.path.join(base_path, 'data')}")
+
+
+def excel_to_mongodb_with_processing(excel_file_name, database_name, collection_name, mongo_uri="mongodb://localhost:27017/"):
+    """
+    Перенос данных из Excel-файла в коллекцию MongoDB с добавлением поля с локальным путем в файловой системе, а также ссылкой на скачивание.
+
+    :param excel_file_name: Имя Excel-файла.
+    :param database_name: Название базы данных MongoDB.
+    :param collection_name: Название коллекции MongoDB.
+    :param mongo_uri: URI для подключения к MongoDB (по умолчанию локальный сервер).
+    """
+
+    df = pd.read_excel(excel_file_name)
+
+    # Добавление колонки с адресом расположения в файловой системе локальной машины
+    def generate_local_path(row):
+        side = "left_adrenal" if row['Локализация надпочечника (слева/справа)'] == "слева" else "right_adrenal"
+        return f"data/{side}/class_{row['Доброкачественный КТ фенотип']}_{row['Неопределенный КТ фенотип']}_{row['Злокачественный КТ фенотип']}"
+
+    df['Локальный путь'] = df.apply(generate_local_path, axis=1)
+
+    # Подключение к MongoDB
+    client = MongoClient(mongo_uri)
+    db = client[database_name]
+    collection = db[collection_name]
+
+    # Преобразование данных DataFrame в список записей
+    data = df.to_dict(orient='records')
+
+
+
+    # Проверка наличия записей и добавление новых по полям "ID пациента" + "Локализация надпочечника (слева/справа)"
+    new_records_count = 0   # Счётчик добавленных записей
+    for record in data:
+        query = {
+            "ID пациента": record["ID пациента"],
+            "Локализация надпочечника (слева/справа)": record["Локализация надпочечника (слева/справа)"]
+        }
+        if not collection.find_one(query):
+            collection.insert_one(record)
+            new_records_count += 1
+
+
+    print(f"Данные успешно загружены в MongoDB.")
+    print(f"Добавлено новых записей: {new_records_count}.")
+    print(f"Общее количество записей в коллекции '{collection_name}': {collection.count_documents({})}.")
 
 
 def check_images_in_excel(image_dir, excel_file, column_d='Файл c нативной фазой', column_t='Присутствует в папке "Все картинки"'):
@@ -102,7 +150,7 @@ def check_images_in_excel(image_dir, excel_file, column_d='Файл c натив
 
 def delete_videos(video_dir, video_list):
     """
-    Удаляет видеофайлы из указанной папки по названиям, которые переданы в списке.
+    Удаляет видеофайлы из папки {video_dir} по названиям, которые переданы в списке {video_list}.
     """
     for video_name in video_list:
         video_path = os.path.join(video_dir, video_name)
@@ -178,7 +226,7 @@ def test_download_and_display_single_video(excel_file, column_names):
 
 def display_video(video_path, frame_skip=5, wait_key=200):
     """
-    Функция для воспроизведения каждого {frame_skip} кадра видео с задержкой  {wait_key} мс.
+    Функция для воспроизведения каждого {frame_skip} кадра видео с путем {video_path} с задержкой  {wait_key} мс.
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -208,11 +256,13 @@ def display_video(video_path, frame_skip=5, wait_key=200):
     cap.release()
     cv2.destroyAllWindows()
 
-# плохо работает
+
+
 def display_video_with_max_contour(video_path, frame_skip=5, wait_key=400):
     """
     Функция находит максимальный контур на каждом {frame_skip} кадре,
-    проводит вертикальную линию через центр контура и выводит кадры в одном окне, чтобы убедиться, что центр найден
+    проводит вертикальную линию через центр контура и выводит кадры в одном окне, чтобы убедиться, что центр найден.
+    РАБОТАЕТ ПЛОХО
     """
 
     cap = cv2.VideoCapture(video_path)
@@ -261,7 +311,6 @@ def display_video_with_max_contour(video_path, frame_skip=5, wait_key=400):
 
     cap.release()
     cv2.destroyAllWindows()
-
 # проверяем что надпочечники на своих местах
 def display_video_with_center(video_path, frame_skip=5, wait_key=200):
     """
@@ -312,10 +361,12 @@ def manual_directory_check(videos_dir):
         if os.path.isfile(video_path) and file_name.endswith(('.mp4', '.avi', '.mov', '.mkv')):
             display_video_with_center(video_path)
 
+
+
 # заполняем папку data
 def copy_videos_from_excel(excel_path, video_dir, data_dir):
     """
-    Функция перемещает видео из папки video_dir в папку data, согласно Excel-файлу.
+    Функция перемещает видео из папки {video_dir} в папку {data_dir}, согласно Excel-файлу.
 
     Параметры:
         excel_path (str): Путь к Excel-файлу
@@ -364,10 +415,10 @@ def copy_videos_from_excel(excel_path, video_dir, data_dir):
 
     return not_found_files
 
-# функция для загрузки и обработки видео с уменьшением количества и размера кадров.
+# функция для загрузки и обработки видео с уменьшением количества и размера кадров. Вот тут можно экспериментировать!!
 def load_videos(data_dir, target_size=(240, 240), frame_skip=5, add_third_dimension=False):
     """
-      Функция загружает видео из указанной директории, обрабатывает их (уменьшает количество кадров, уменьшает размер) и
+      Функция загружает видео из директории {data_dir}, обрабатывает их (уменьшает количество кадров, уменьшает размер) и
       сохраняет в виде массивов.
 
       Возвращает:
@@ -534,8 +585,35 @@ def load_videos_from_mongo(db_name, collection_name, data_dir, target_size=(240,
 
 
 if __name__ == "__main__":
+
+    choice = 'converting excel to mongo'
+    match choice:
+        case 'create local structure':
+            # Создаем иерархию папок на локальной машине для хранения и дальнейших преобразований mp4-файлов
+            create_folder_structure()
+
+        case 'converting excel to mongo':
+            ''' 1. Предварительно установите MongoDBCompass, создайте БД и коллекцию'''
+
+            excel_path = os.path.join(os.path.dirname(__file__), r'База данных МСКТ надпочечников_MP4.xlsx')
+
+            # Создание CSV файла с прямыми ссылками на скачивание файлов из Excel файла
+            create_direct_links_csv(excel_path, sheet_name='Лист1', output_csv='direct_links.csv')
+
+            # Преобразовываем данные из сырого ХД (excel-файл) в MongoDB, добавляя поле с путем до файла на локальной машине, а также ссылкой на скачивание
+            # excel_to_mongodb_with_processing(
+            #     excel_file_name=excel_path,
+            #     database_name="Adrenal_CT",
+            #     collection_name="Data")
+
+        case 3:
+            print("Вы выбрали третий вариант.")
+        case _:
+            print("Неизвестный выбор.")
+
+
     # create_folder_structure(r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture')
-    test_download_and_display_single_video(r"C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\База данных МСКТ надпочечников_MP4.xlsx", column_names=['Файл c нативной фазой'])
+    # test_download_and_display_single_video(r"C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\База данных МСКТ надпочечников_MP4.xlsx", column_names=['Файл c нативной фазой'])
 
 
     # video_path = r"C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\data\class02\ID5_NATIVE_SE1.mp4"
@@ -543,7 +621,7 @@ if __name__ == "__main__":
     # display_video_with_max_contour(video_path, frame_skip=5, wait_key=500) # не работает пока
     # display_video_with_center(video_path, frame_skip=5)
 
-    data_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\data'
+    # data_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\data'
     # videos, labels, label_names = load_videos(data_dir, target_size=(224, 224), frame_skip=5, add_third_dimension=True)
     # print(labels, label_names)
 
