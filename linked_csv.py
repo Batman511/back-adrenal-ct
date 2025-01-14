@@ -59,7 +59,7 @@ def create_direct_links_csv(input_excel, sheet_name, output_csv):
                         items = resource_info['_embedded']['items']
                         for item in items:
                             if item['type'] == 'file':
-                                folder = item['name'].split("_")[0] if "_" in item['name'] else "Unknown"
+                                folder = item['name'].split("_")[0][2:] if "_" in item['name'] else "Unknown"
                                 # Разделяем строку на основе "_" и обрабатываем последний элемент до точки
                                 if "_" in item['name']:
                                     parts = item['name'].split("_")
