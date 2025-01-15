@@ -222,6 +222,226 @@ def download_files_from_mongo(db_name, collection_name, columns_to_download, mon
 
     print(f"Скачивание завершено. Всего скачано файлов: {downloaded_count}")
 
+def load_videos_from_mongo(db_name, collection_name, data_dir, target_size=(240, 240), frame_skip=5, add_third_dimension=False):
+    """
+    Загружает видео из путей, указанных в MongoDB, обрабатывает их и возвращает массивы видео, меток и имен меток.
+
+    Аргументы:
+        db_name (str): Имя базы данных MongoDB.
+        collection_name (str): Имя коллекции MongoDB.
+        data_dir (str): Корневая директория для хранения данных.
+        target_size (tuple): Размер, к которому нужно привести кадры видео.
+        frame_skip (int): Количество кадров, которые нужно пропустить.
+        add_third_dimension (bool): Флаг для добавления третьего измерения к кадрам.
+
+    Возвращает:
+        videos (np.array): Массив обработанных видео.
+        labels (np.array): Массив меток.
+        formatted_label_names (list): Список имен меток.
+    """
+    # Подключение к MongoDB локально или через песочницу
+    client = MongoClient('mongodb://localhost:27017/')
+    db = client[db_name]
+    collection = db[collection_name]
+
+    videos = []
+    labels = []
+    formatted_label_names = []
+
+    # Получаем все документы из коллекции
+    for document in collection.find():
+        path = document["Локальный путь"]  # Извлекаем локальный путь из документа -> заменить на ссылку в БД S3
+        full_path = data_dir + path
+
+        if 'left_adrenal' in path:
+            prefix = 'left'
+        elif 'right_adrenal' in path:
+            prefix = 'right'
+        else:
+            continue
+
+        # только для локалки
+        last_backslash_index = full_path.rfind('\\')
+        class_name = full_path[last_backslash_index + 1:] # ['class_0_0_0']
+        video_path = full_path + "\\" + document["Файл c нативной фазой"] + ".mp4"
+
+
+        cap = cv2.VideoCapture(video_path)
+        frames = []
+        frame_count = 0 # для пропуска кадров
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_count % frame_skip == 0:
+                # Обрезаем изображение в зависимости от надпочечника
+                if prefix == 'left':
+                    frame = frame[:, :frame.shape[1] // 2]
+                else:
+                    frame = frame[:, frame.shape[1] // 2:]
+
+                frame = cv2.cvtColor(cv2.resize(frame, target_size), cv2.COLOR_BGR2GRAY)
+                # МОЖНО ДОБАВИТЬ ЕЩЕ ОБРАБОТКУ
+
+                if add_third_dimension:
+                    frame = np.expand_dims(frame, axis=-1) # Добавление канала для совместимости формы для некоторых моделей
+
+                frames.append(frame)
+            frame_count += 1
+        cap.release()
+
+        # Генерируем метку в виде массива из трех чисел
+        class_parts = class_name.split('_')[1:] # ['0', '0', '0']
+        label = [np.uint8(int(class_parts[i])) for i in range(3)] # [np.uint8(0), np.uint8(0), np.uint8(0)]
+
+        # Генерируем имя метки в виде left_001 или right_001
+        formatted_label_name = f"{prefix}_{''.join(class_parts)}"
+
+        videos.append(np.array(frames, dtype=np.uint8))
+        labels.append(label)
+        formatted_label_names.append(formatted_label_name)
+
+    return np.array(videos, dtype=np.uint8), np.array(labels, dtype=np.int64), np.array(formatted_label_names)
+
+def process_videos_from_local_data(db_name, collection_name, target_size=(240, 240), frame_skip=5, add_third_dimension=False):
+    """
+    Обрабатывает все видео из локальной папки [здесь возможны эксперименты по обработке], сопоставляет данные с MongoDB и формирует метки. Возвращает numpy-массивы видео, меток и имен.
+
+    Аргументы:
+        db_name (str): Имя базы данных MongoDB.
+        collection_name (str): Имя коллекции MongoDB.
+        data_dir (str): Корневая директория для хранения данных.
+        target_size (tuple): Размер, к которому нужно привести кадры видео.
+        frame_skip (int): Количество кадров, которые нужно пропустить.
+        add_third_dimension (bool): Флаг для добавления третьего измерения к кадрам.
+
+    Возвращает:
+        videos (np.array): Массив обработанных видео.
+        labels (np.array): Массив меток.
+        formatted_label_names (list): Список имен меток.
+    """
+    data_dir = os.path.join(os.path.dirname(__file__), 'data')
+
+    client = MongoClient("mongodb://localhost:27017/")
+    db = client[db_name]
+    collection = db[collection_name]
+
+    videos = []
+    labels = []
+    formatted_label_names = []
+
+    for root, _, files in os.walk(data_dir):
+        for file in files:  # проходимся по всем скачанным файлам
+            if not file.endswith(".mp4"):
+                continue
+
+            video_path = os.path.join(root, file)
+            relative_subpath = os.path.dirname(os.path.relpath(video_path, data_dir))
+            relative_path = os.path.join("data", relative_subpath).replace("\\", "/")   # "data/left_adrenal/class_0_0_1"
+
+            # Извлечение ID из имени файла
+            patient_id = None
+            if "ID" in file and "_" in file:
+                patient_id = int(file.split("ID")[1].split("_")[0])
+
+            if not patient_id:
+                print(f"Не удалось извлечь ID пациента из файла {relative_path}")
+                continue
+
+            # Поиск записи в MongoDB
+            record = collection.find_one({"Локальный путь": relative_path, "ID пациента": patient_id})
+
+            if not record:
+                print(f"Не найдена запись в MongoDB для файла с ID {patient_id} и Локальным путем {relative_path}")
+                continue
+
+
+            # Генерируем метку в виде массива из трех чисел
+            label = np.array([      # [np.uint8(0), np.uint8(0), np.uint8(0)]
+                np.uint8(record.get("Доброкачественный КТ фенотип", 0)),
+                np.uint8(record.get("Неопределенный КТ фенотип", 0)),
+                np.uint8(record.get("Злокачественный КТ фенотип", 0))
+            ], dtype=np.uint8)
+
+            class_parts = [
+                str(record.get("Доброкачественный КТ фенотип", 0)),
+                str(record.get("Неопределенный КТ фенотип", 0)),
+                str(record.get("Злокачественный КТ фенотип", 0))
+            ]
+
+
+            # Генерируем имя метки в виде left_001 или right_001
+            if "left_adrenal" in relative_path:
+                prefix = "left"
+            elif "right_adrenal" in relative_path:
+                prefix = "right"
+            else:
+                continue
+            formatted_label_name = f"{prefix}_{''.join(class_parts)}"
+
+
+            # ОБРАБОТКА ВИДЕО ДЛЯ КЛАССИФИКАЦИИ
+            cap = cv2.VideoCapture(video_path)
+            frames = []
+            frame_count = 0
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                if frame_count % frame_skip == 0:
+                    # Обрезаем изображение в зависимости от надпочечника
+                    if prefix == "left":
+                        frame = frame[:, :frame.shape[1] // 2]
+                    else:
+                        frame = frame[:, frame.shape[1] // 2:]
+
+                    # Обработка кадра [МОЖНО ДОБАВИТЬ ЕЩЕ]
+                    frame = cv2.cvtColor(cv2.resize(frame, target_size), cv2.COLOR_BGR2GRAY)
+
+                    if add_third_dimension:
+                        frame = np.expand_dims(frame, axis=-1) # Добавление канала для совместимости формы для некоторых моделей
+
+                    frames.append(frame)
+                frame_count += 1
+            cap.release()
+
+            videos.append(np.array(frames, dtype=np.uint8))
+            labels.append(label)
+            formatted_label_names.append(formatted_label_name)
+
+    return np.array(videos, dtype=np.uint8), np.array(labels, dtype=np.int64), np.array(formatted_label_names)
+
+def save_npy_arrays(videos, labels, labels_names):
+    """
+    Сохраняет массивы videos, labels и labels_names в папку 'npy_data_download'.
+
+    Аргументы:
+        videos (np.array): Массив видео.
+        labels (np.array): Массив меток.
+        labels_names (list): Список имен меток.
+    """
+    download_folder = os.path.join(os.path.dirname(__file__), 'npy_data_download')
+
+    if not os.path.exists(download_folder):
+        os.makedirs(download_folder)
+
+    videos_file = os.path.join(download_folder, 'videos.npy')
+    labels_file = os.path.join(download_folder, 'labels.npy')
+    labels_names_file = os.path.join(download_folder, 'labels_names.npy')
+
+    # Сохранение массивов
+    np.save(videos_file, videos)
+    np.save(labels_file, labels)
+    np.save(labels_names_file, labels_names)
+
+    print(f"Файлы успешно сохранены в папку 'npy_data_download'")
+
+# def delete_local_videos():
+    # Функция которая удалит все файлы из папки data
+
 
 ''' вряд ли понадобится, юзалось для проверки смещения'''
 def display_video_with_max_contour(video_path, frame_skip=5, wait_key=400):
@@ -330,179 +550,10 @@ def directory_check_with_center(videos_dir):
 
 
 
-# функция для загрузки и обработки видео с уменьшением количества и размера кадров. Вот тут можно экспериментировать!!
-def load_videos(data_dir, target_size=(240, 240), frame_skip=5, add_third_dimension=False):
-    """
-      Функция загружает видео из директории {data_dir}, обрабатывает их (уменьшает количество кадров, уменьшает размер) и
-      сохраняет в виде массивов.
-
-      Возвращает:
-          videos : Массив обработанных видео.
-          labels : Массив меток классов. [0 0 1]
-          label_names : Список имен меток. 'left_001'
-      """
-
-    """
-    data_dir ='C:\\Users\\Антон\\Documents\\материалы ВИШ\\Диплом КТ\\Adrenal CT architecture\\data'
-    label_names =['left_adrenal', 'right_adrenal']
-    class_names =['class_0_0_0', 'class_0_0_1', 'class_0_1_0', 'class_0_1_1', 'class_1_0_0', 'class_1_0_1', 'class_1_1_0', 'class_1_1_1']
-    class_path ='C:\\Users\\Антон\\Documents\\материалы ВИШ\\Диплом КТ\\Adrenal CT architecture\\data\\left_adrenal\\class_0_0_0'
-    video_name ='ID100_NATIVE.mp4'
-    video_path ='C:\\Users\\Антон\\Documents\\материалы ВИШ\\Диплом КТ\\Adrenal CT architecture\\data\\left_adrenal\\class_0_0_0\\ID100_NATIVE.mp4'
-    class_parts =['0', '0', '0']
-    label =[np.uint8(0), np.uint8(0), np.uint8(0)]
-    formatted_label_name ='left_000'
-    video_name ='ID101_NATIVE.mp4'
-    video_path ='C:\\Users\\Антон\\Documents\\материалы ВИШ\\Диплом КТ\\Adrenal CT architecture\\data\\left_adrenal\\class_0_0_0\\ID101_NATIVE.mp4'
-    class_parts =['0', '0', '0']
-    """
-
-    videos = []
-    labels = []
-    formatted_label_names = []
-    label_names = os.listdir(data_dir) # ['left_adrenal', 'right_adrenal']
-
-    for label_name in label_names:
-        label_dir = os.path.join(data_dir, label_name)
-        if 'left_adrenal' in label_name:
-            prefix = 'left'
-        elif 'right_adrenal' in label_name:
-            prefix = 'right'
-        else:
-            continue
-
-
-        class_names = os.listdir(label_dir) # ['class_0_0_0', 'class_0_0_1', 'class_0_1_0', 'class_0_1_1', 'class_1_0_0', 'class_1_0_1', 'class_1_1_0', 'class_1_1_1']
-        for class_name in class_names:
-            class_path = os.path.join(label_dir, class_name) # 'C:\\Users\\Антон\\Documents\\материалы ВИШ\\Диплом КТ\\Adrenal CT architecture\\data\\left_adrenal\\class_0_0_0'
-            for video_name in os.listdir(class_path): # for 'ID100_NATIVE.mp4'
-                video_path = os.path.join(class_path, video_name) # 'C:\\Users\\Антон\\Documents\\материалы ВИШ\\Диплом КТ\\Adrenal CT architecture\\data\\left_adrenal\\class_0_0_0\\ID100_NATIVE.mp4'
-                cap = cv2.VideoCapture(video_path)
-                frames = []
-                frame_count = 0
-                while cap.isOpened():
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-
-                    if frame_count % frame_skip == 0:
-                        # Обрезаем изображение в зависимости от надпочечника
-                        if prefix == 'left':
-                            frame = frame[:, :frame.shape[1] // 2]
-                        else:
-                            frame = frame[:, frame.shape[1] // 2:]
-
-
-                        frame = cv2.cvtColor(cv2.resize(frame, target_size), cv2.COLOR_BGR2GRAY)
-                        if add_third_dimension:
-                            frame = np.expand_dims(frame, axis=-1)  # Добавление канала для совместимости формы для некоторых моделей
-
-                        frames.append(frame)
-                    frame_count += 1
-                cap.release()
-
-                # Генерируем метку в виде массива из трех чисел
-                class_parts = class_name.split('_')[1:] # ['0', '0', '0']
-                label = [np.uint8(int(class_parts[i])) for i in range(3)] # [np.uint8(0), np.uint8(0), np.uint8(0)]
-
-                # Генерируем имя метки в виде left_001 или right_001
-                formatted_label_name = f"{prefix}_{''.join(class_parts)}" # 'left_000'
-
-                videos.append(np.array(frames, dtype=np.uint8))
-                labels.append(label)
-                formatted_label_names.append(formatted_label_name)
-
-    return np.array(videos, dtype=np.uint8), np.array(labels, dtype=np.int64), formatted_label_names
-
-
-def load_videos_from_mongo(db_name, collection_name, data_dir, target_size=(240, 240), frame_skip=5, add_third_dimension=False):
-    """
-    Загружает видео из путей, указанных в MongoDB, обрабатывает их и возвращает массивы видео, меток и имен меток.
-
-    Аргументы:
-        db_name (str): Имя базы данных MongoDB.
-        collection_name (str): Имя коллекции MongoDB.
-        data_dir (str): Корневая директория для хранения данных.
-        target_size (tuple): Размер, к которому нужно привести кадры видео.
-        frame_skip (int): Количество кадров, которые нужно пропустить.
-        add_third_dimension (bool): Флаг для добавления третьего измерения к кадрам.
-
-    Возвращает:
-        videos (np.array): Массив обработанных видео.
-        labels (np.array): Массив меток.
-        formatted_label_names (list): Список имен меток.
-    """
-    # Подключение к MongoDB локально или через песочницу
-    client = MongoClient('mongodb://localhost:27017/')
-    db = client[db_name]
-    collection = db[collection_name]
-
-    videos = []
-    labels = []
-    formatted_label_names = []
-
-    # Получаем все документы из коллекции
-    for document in collection.find():
-        path = document["Локальный путь"]  # Извлекаем локальный путь из документа -> заменить на ссылку в БД S3
-        full_path = data_dir + path
-
-        if 'left_adrenal' in path:
-            prefix = 'left'
-        elif 'right_adrenal' in path:
-            prefix = 'right'
-        else:
-            continue
-
-        # только для локалки
-        last_backslash_index = full_path.rfind('\\')
-        class_name = full_path[last_backslash_index + 1:] # ['class_0_0_0']
-        video_path = full_path + "\\" + document["Файл c нативной фазой"] + ".mp4"
-
-
-        cap = cv2.VideoCapture(video_path)
-        frames = []
-        frame_count = 0 # для пропуска кадров
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            if frame_count % frame_skip == 0:
-                # Обрезаем изображение в зависимости от надпочечника
-                if prefix == 'left':
-                    frame = frame[:, :frame.shape[1] // 2]
-                else:
-                    frame = frame[:, frame.shape[1] // 2:]
-
-                frame = cv2.cvtColor(cv2.resize(frame, target_size), cv2.COLOR_BGR2GRAY)
-                # МОЖНО ДОБАВИТЬ ЕЩЕ ОБРАБОТКУ
-
-                if add_third_dimension:
-                    frame = np.expand_dims(frame, axis=-1) # Добавление канала для совместимости формы для некоторых моделей
-
-                frames.append(frame)
-            frame_count += 1
-        cap.release()
-
-        # Генерируем метку в виде массива из трех чисел
-        class_parts = class_name.split('_')[1:] # ['0', '0', '0']
-        label = [np.uint8(int(class_parts[i])) for i in range(3)] # [np.uint8(0), np.uint8(0), np.uint8(0)]
-
-        # Генерируем имя метки в виде left_001 или right_001
-        formatted_label_name = f"{prefix}_{''.join(class_parts)}"
-
-        videos.append(np.array(frames, dtype=np.uint8))
-        labels.append(label)
-        formatted_label_names.append(formatted_label_name)
-
-    return np.array(videos, dtype=np.uint8), np.array(labels, dtype=np.int64), np.array(formatted_label_names)
-
-
-
 if __name__ == "__main__":
     ''' 0. Надо прописывать команды поочередно '''
 
-    choice = 'download files from DB to local PC'
+    choice = 'data processing for classification and save'
     match choice:
         case 'create local structure':
             # Создаем иерархию папок на локальной машине для хранения и дальнейших преобразований mp4-файлов
@@ -541,65 +592,55 @@ if __name__ == "__main__":
                 mongo_uri="mongodb://localhost:27017/"
                 )
 
+        case 'data processing for classification and save':
+            # Обрабатываем скачанные данные, преобразуя их в numpy-массивы и генерируем метки для классификации
+            videos, labels, labels_names = process_videos_from_local_data(
+                db_name="Adrenal_CT",
+                collection_name="Data",
+                target_size=(224, 224),
+                frame_skip=3,
+                add_third_dimension=True)
+
+            print(f"Данные подготовлены.")
+            print(f"Форма массива видео: {videos.shape}")
+            assert videos.shape[0] == len(labels) == len(labels_names), "Все массивы должны иметь одинаковое количество элементов по первой оси!"
+
+
+            # Генерация случайного порядка индексов и перемешивание
+            shuffle_indices = np.random.permutation(videos.shape[0])
+            videos = videos[shuffle_indices]
+            labels = labels[shuffle_indices]
+            labels_names = labels_names[shuffle_indices]
+
+
+            # Проверка, При необходимости визуальный вывод
+            Num = 10
+            print(f"Метки: {labels[:Num]}")
+            print(f"Имена меток: {labels_names[:Num]}")
+
+            UI_test_one_video = False
+            if UI_test_one_video:
+                first_video = videos[0]
+                window_name = 'Video Display'
+                cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+                for i, frame in enumerate(first_video):
+                    cv2.imshow(window_name, frame)
+
+                    if cv2.waitKey(200) & 0xFF == ord('q'):
+                        break
+                cv2.destroyAllWindows()
+
+
+            # Сохранение файлов
+            UI_save_arrays = True
+            if UI_save_arrays:
+                save_npy_arrays(videos, labels, labels_names)
+
         case _:
             print("Неизвестный выбор.")
 
 
-
-    #     data_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\data'
-    #     videos, labels, labels_names = load_videos(data_dir)
-    #
-    #     # Проверка результата
-#     print(f"Форма массива видео: {videos.shape}")
-#     print(f"Метки: {labels}")
-#     print(f"Имена меток: {labels_names}")
-#
-#
-#     first_video = videos[1]
-#     window_name = 'Video Display'
-#     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-#
-#     for i, frame in enumerate(first_video):
-#         cv2.imshow(window_name, frame)
-#
-#         if cv2.waitKey(200) & 0xFF == ord('q'):
-#             break
-#
-#     cv2.destroyAllWindows()
-
-
-
-
-
-
-#----------------Преобразование данных----------------#
-    # data_dir = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\data'
-    #
-    #
-    # videos, labels, labels_names = load_videos_from_mongo(
-    #     db_name="Adrenal_CT",
-    #     collection_name="Data",
-    #     data_dir=data_dir,
-    #     target_size=(224, 224),
-    #     frame_skip=3,
-    #     add_third_dimension=True
-    # )
-    # print(f"Форма массива видео: {videos.shape}")
-    # assert videos.shape[0] == len(labels) == len(labels_names), "Все массивы должны иметь одинаковое количество элементов по первой оси!"
-    #
-    #
-    # # Генерация случайного порядка индексов и перемешивание
-    # shuffle_indices = np.random.permutation(videos.shape[0])
-    # videos = videos[shuffle_indices]
-    # labels = labels[shuffle_indices]
-    # labels_names = labels_names[shuffle_indices]
-    #
-    #
-    # # print(f"Метки: {labels}")
-    # # print(f"Имена меток: {labels_names}")
-    #
-    #
-    #
     # # Пути для сохранения файлов
     # videos_file = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\videos.npy'
     # labels_file = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\labels.npy'
