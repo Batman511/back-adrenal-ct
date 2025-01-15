@@ -439,8 +439,26 @@ def save_npy_arrays(videos, labels, labels_names):
 
     print(f"Файлы успешно сохранены в папку 'npy_data_download'")
 
-# def delete_local_videos():
-    # Функция которая удалит все файлы из папки data
+def delete_local_videos(data_dir='data'):
+    """
+    Удаляет все файлы из папки data, включая файлы в подкаталогах.
+
+    Аргументы:
+        data_dir (str): Путь к корневой папке (По умолчанию 'data').
+    """
+    print("Очистка папки data...")
+    if os.path.exists(data_dir):
+        for root, dirs, files in os.walk(data_dir, topdown=False):
+            for file in files:
+                file_path = os.path.join(root, file)
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    print(f"Ошибка при удалении файла {file_path}: {e}")
+    else:
+        print(f"Папка {data_dir} не найдена!")
+
+    print("Файлы успешно удалены.")
 
 
 ''' вряд ли понадобится, юзалось для проверки смещения'''
@@ -584,7 +602,9 @@ if __name__ == "__main__":
             display_video(links_test_download_file, file_name=file_name) # для закрытия нажимать 'q'
 
         case 'download files from DB to local PC':
-            # Скачиваем недостающие файлы в локальную систему
+            ''' 2. Для Классификации в columns_to_download прописать интересующие имена полей без разметки'''
+
+            # Скачиваем недостающие файлы в локальную систему. columns_to_download содержит интересующие для скачивания фазы.
             download_files_from_mongo(
                 db_name="Adrenal_CT",
                 collection_name="Data",
@@ -637,42 +657,27 @@ if __name__ == "__main__":
             if UI_save_arrays:
                 save_npy_arrays(videos, labels, labels_names)
 
+        case 'delete local videos':
+            # Очистка всех видео-файлов из папки data
+            delete_local_videos()
+
+        case 'load of data sets':
+            ''' 3. Для работы с имеющимися массивами данных (обработка)'''
+
+            load_folder = os.path.join(os.path.dirname(__file__), 'npy_data_download')
+            assert os.path.exists(load_folder), "Папка npy_data_download не найдена!"
+
+            videos_file = os.path.join(load_folder, 'videos.npy')
+            labels_file = os.path.join(load_folder, 'labels.npy')
+            labels_names_file = os.path.join(load_folder, 'labels_names.npy')
+
+            videos = np.load(videos_file)
+            labels = np.load(labels_file)
+            labels_names = np.load(labels_names_file)
+
+            print(f"Форма массива видео: {videos.shape}")
+
+            #  А дальше что-то делаем...
+
         case _:
             print("Неизвестный выбор.")
-
-
-    # # Пути для сохранения файлов
-    # videos_file = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\videos.npy'
-    # labels_file = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\labels.npy'
-    # labels_names_file = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\labels_names.npy'
-    #
-    # np.save(videos_file, videos)
-    # np.save(labels_file, labels)
-    # np.save(labels_names_file, labels_names)
-    #
-    # print("Массивы успешно сохранены.")
-
-
-#----------------Загрузка массивов данных----------------#
-
-    # videos_file = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\videos.npy'
-    # labels_file = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\labels.npy'
-    # labels_names_file = r'C:\Users\Антон\Documents\материалы ВИШ\Диплом КТ\Adrenal CT architecture\labels_names.npy'
-    #
-    # videos = np.load(videos_file)
-    # labels = np.load(labels_file)
-    # labels_names = np.load(labels_names_file)
-    #
-    # print(f"Форма массива видео: {videos.shape}")
-    #
-    # first_video = videos[0]
-    # window_name = 'Video Display'
-    # cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-    #
-    # for i, frame in enumerate(first_video):
-    #     cv2.imshow(window_name, frame)
-    #
-    #     if cv2.waitKey(200) & 0xFF == ord('q'):
-    #         break
-    #
-    # cv2.destroyAllWindows()
