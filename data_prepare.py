@@ -571,113 +571,117 @@ def directory_check_with_center(videos_dir):
 if __name__ == "__main__":
     ''' 0. Надо прописывать команды поочередно '''
 
+    def user_interface(choice):
+        match choice:
+            case 'create local structure':
+                # Создаем иерархию папок на локальной машине для хранения и дальнейших преобразований mp4-файлов
+                create_folder_structure()
+
+            case 'create MongoDB database':
+                ''' 1. Предварительно установите MongoDBCompass, создайте БД и коллекцию'''
+
+                excel_base_path = os.path.join(os.path.dirname(__file__), r'База данных МСКТ надпочечников_MP4.xlsx')
+
+                # Создание CSV файла с прямыми ссылками на скачивание файлов из Excel файла. Время формирования = 3.8 записи/сек
+                # create_direct_links_csv(excel_base_path, sheet_name='Лист1', output_csv='direct_links.csv')
+                links_csv_path = os.path.join(os.path.dirname(__file__), r'direct_links.csv')
+
+                # Преобразовываем данные из сырого ХД (excel-файл) в MongoDB, добавляя поле с путем до файла на локальной машине, а также поле с ссылкой на скачивание каждого файла
+                excel_to_mongodb_with_processing(
+                    excel_file=excel_base_path,
+                    links_csv_file=links_csv_path,
+                    database_name="Adrenal_CT",
+                    collection_name="Data")
+
+            case 'test download file by name':
+                file_name = "ID53_ARTERIAL" # название файла для скачивания без типа
+
+                # Проверка того, что прямые ссылки из csv-файла рабочие, а файлы скачиваются корректно
+                download_file_from_csv(file_name, download_folder='ct_download')
+                links_test_download_file = os.path.join(os.path.dirname(__file__), 'ct_download', f'{file_name}.mp4')
+                display_video(links_test_download_file, file_name=file_name) # для закрытия нажимать 'q'
+
+            case 'download files from DB to local PC':
+                ''' 2. Для Классификации в columns_to_download прописать интересующие имена полей без разметки'''
+
+                # Скачиваем недостающие файлы в локальную систему. columns_to_download содержит интересующие для скачивания фазы.
+                download_files_from_mongo(
+                    db_name="Adrenal_CT",
+                    collection_name="Data",
+                    columns_to_download=["Файл c нативной фазой"],
+                    mongo_uri="mongodb://localhost:27017/"
+                    )
+
+            case 'data processing for classification and save':
+                # Обрабатываем скачанные данные, преобразуя их в numpy-массивы и генерируем метки для классификации
+                videos, labels, labels_names = process_videos_from_local_data(
+                    db_name="Adrenal_CT",
+                    collection_name="Data",
+                    target_size=(224, 224),
+                    frame_skip=3,
+                    add_third_dimension=True)
+
+                print(f"Данные подготовлены.")
+                print(f"Форма массива видео: {videos.shape}")
+                assert videos.shape[0] == len(labels) == len(labels_names), "Все массивы должны иметь одинаковое количество элементов по первой оси!"
+
+
+                # Генерация случайного порядка индексов и перемешивание
+                shuffle_indices = np.random.permutation(videos.shape[0])
+                videos = videos[shuffle_indices]
+                labels = labels[shuffle_indices]
+                labels_names = labels_names[shuffle_indices]
+
+
+                # Проверка, При необходимости визуальный вывод
+                Num = 10
+                print(f"Метки: {labels[:Num]}")
+                print(f"Имена меток: {labels_names[:Num]}")
+
+                UI_test_one_video = False
+                if UI_test_one_video:
+                    first_video = videos[0]
+                    window_name = 'Video Display'
+                    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+                    for i, frame in enumerate(first_video):
+                        cv2.imshow(window_name, frame)
+
+                        if cv2.waitKey(200) & 0xFF == ord('q'):
+                            break
+                    cv2.destroyAllWindows()
+
+
+                # Сохранение файлов
+                UI_save_arrays = True
+                if UI_save_arrays:
+                    save_npy_arrays(videos, labels, labels_names)
+
+            case 'delete local videos':
+                # Очистка всех видео-файлов из папки data
+                delete_local_videos()
+
+            case 'load of data sets':
+                ''' 3. Для работы с имеющимися массивами данных (обработка)'''
+
+                load_folder = os.path.join(os.path.dirname(__file__), 'npy_data_download')
+                assert os.path.exists(load_folder), "Папка npy_data_download не найдена!"
+
+                videos_file = os.path.join(load_folder, 'videos.npy')
+                labels_file = os.path.join(load_folder, 'labels.npy')
+                labels_names_file = os.path.join(load_folder, 'labels_names.npy')
+
+                videos = np.load(videos_file)
+                labels = np.load(labels_file)
+                labels_names = np.load(labels_names_file)
+
+                print(f"Форма массива видео: {videos.shape}")
+
+                #  А дальше что-то делаем...
+
+            case _:
+                print("Неизвестный выбор.")
+
+
     choice = 'data processing for classification and save'
-    match choice:
-        case 'create local structure':
-            # Создаем иерархию папок на локальной машине для хранения и дальнейших преобразований mp4-файлов
-            create_folder_structure()
-
-        case 'create MongoDB database':
-            ''' 1. Предварительно установите MongoDBCompass, создайте БД и коллекцию'''
-
-            excel_base_path = os.path.join(os.path.dirname(__file__), r'База данных МСКТ надпочечников_MP4.xlsx')
-
-            # Создание CSV файла с прямыми ссылками на скачивание файлов из Excel файла. Время формирования = 3.8 записи/сек
-            # create_direct_links_csv(excel_base_path, sheet_name='Лист1', output_csv='direct_links.csv')
-            links_csv_path = os.path.join(os.path.dirname(__file__), r'direct_links.csv')
-
-            # Преобразовываем данные из сырого ХД (excel-файл) в MongoDB, добавляя поле с путем до файла на локальной машине, а также поле с ссылкой на скачивание каждого файла
-            excel_to_mongodb_with_processing(
-                excel_file=excel_base_path,
-                links_csv_file=links_csv_path,
-                database_name="Adrenal_CT",
-                collection_name="Data")
-
-        case 'test download file by name':
-            file_name = "ID53_ARTERIAL" # название файла для скачивания без типа
-
-            # Проверка того, что прямые ссылки из csv-файла рабочие, а файлы скачиваются корректно
-            download_file_from_csv(file_name, download_folder='ct_download')
-            links_test_download_file = os.path.join(os.path.dirname(__file__), 'ct_download', f'{file_name}.mp4')
-            display_video(links_test_download_file, file_name=file_name) # для закрытия нажимать 'q'
-
-        case 'download files from DB to local PC':
-            ''' 2. Для Классификации в columns_to_download прописать интересующие имена полей без разметки'''
-
-            # Скачиваем недостающие файлы в локальную систему. columns_to_download содержит интересующие для скачивания фазы.
-            download_files_from_mongo(
-                db_name="Adrenal_CT",
-                collection_name="Data",
-                columns_to_download=["Файл c нативной фазой"],
-                mongo_uri="mongodb://localhost:27017/"
-                )
-
-        case 'data processing for classification and save':
-            # Обрабатываем скачанные данные, преобразуя их в numpy-массивы и генерируем метки для классификации
-            videos, labels, labels_names = process_videos_from_local_data(
-                db_name="Adrenal_CT",
-                collection_name="Data",
-                target_size=(224, 224),
-                frame_skip=3,
-                add_third_dimension=True)
-
-            print(f"Данные подготовлены.")
-            print(f"Форма массива видео: {videos.shape}")
-            assert videos.shape[0] == len(labels) == len(labels_names), "Все массивы должны иметь одинаковое количество элементов по первой оси!"
-
-
-            # Генерация случайного порядка индексов и перемешивание
-            shuffle_indices = np.random.permutation(videos.shape[0])
-            videos = videos[shuffle_indices]
-            labels = labels[shuffle_indices]
-            labels_names = labels_names[shuffle_indices]
-
-
-            # Проверка, При необходимости визуальный вывод
-            Num = 10
-            print(f"Метки: {labels[:Num]}")
-            print(f"Имена меток: {labels_names[:Num]}")
-
-            UI_test_one_video = False
-            if UI_test_one_video:
-                first_video = videos[0]
-                window_name = 'Video Display'
-                cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-
-                for i, frame in enumerate(first_video):
-                    cv2.imshow(window_name, frame)
-
-                    if cv2.waitKey(200) & 0xFF == ord('q'):
-                        break
-                cv2.destroyAllWindows()
-
-
-            # Сохранение файлов
-            UI_save_arrays = True
-            if UI_save_arrays:
-                save_npy_arrays(videos, labels, labels_names)
-
-        case 'delete local videos':
-            # Очистка всех видео-файлов из папки data
-            delete_local_videos()
-
-        case 'load of data sets':
-            ''' 3. Для работы с имеющимися массивами данных (обработка)'''
-
-            load_folder = os.path.join(os.path.dirname(__file__), 'npy_data_download')
-            assert os.path.exists(load_folder), "Папка npy_data_download не найдена!"
-
-            videos_file = os.path.join(load_folder, 'videos.npy')
-            labels_file = os.path.join(load_folder, 'labels.npy')
-            labels_names_file = os.path.join(load_folder, 'labels_names.npy')
-
-            videos = np.load(videos_file)
-            labels = np.load(labels_file)
-            labels_names = np.load(labels_names_file)
-
-            print(f"Форма массива видео: {videos.shape}")
-
-            #  А дальше что-то делаем...
-
-        case _:
-            print("Неизвестный выбор.")
+    user_interface(choice)
