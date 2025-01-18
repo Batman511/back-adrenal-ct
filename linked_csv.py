@@ -85,7 +85,7 @@ def create_direct_links_csv(input_excel, sheet_name, output_csv):
 
 
 if __name__ == "__main__":
-    input_excel = 'data/База данных МСКТ надпочечников_MP4.xlsx'  # Укажите путь к вашему Excel файлу
+    input_excel = 'База данных МСКТ надпочечников_MP4.xlsx'  # Укажите путь к вашему Excel файлу
     sheet_name = 'Лист1'  # Укажите имя листа в Excel
     output_csv = 'direct_links.csv'  # Имя выходного файла CSV
 
