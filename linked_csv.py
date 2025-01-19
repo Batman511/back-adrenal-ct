@@ -2,7 +2,7 @@ import pandas as pd
 import requests
 import csv
 from urllib.parse import urlencode
-
+import os
 
 def get_resource_info(public_link):
     """
@@ -18,41 +18,70 @@ def get_resource_info(public_link):
 
     return response.json()
 
-
 def extract_links_from_excel(input_excel, sheet_name):
     """
-    Извлечение уникальных ссылок на Яндекс.Диск из Excel файла.
+    Извлечение данных из Excel файла.
     """
     try:
         data = pd.read_excel(input_excel, sheet_name=sheet_name)
-        # Извлечение столбца с ссылками и удаление дубликатов
-        unique_links = data['Местоположение файлов'].drop_duplicates(keep='first').tolist()
-        return unique_links
+        # Удаление дубликатов ссылок на Яндекс.Диск
+        data = data.drop_duplicates(subset=['Местоположение файлов'])
+        return data
     except FileNotFoundError:
         raise FileNotFoundError(f"Файл '{input_excel}' не найден.")
-    except KeyError:
-        raise KeyError(f"Столбец 'Местоположение файлов' отсутствует в листе '{sheet_name}'.")
     except Exception as e:
         raise Exception(f"Произошла ошибка: {e}")
 
-
-def create_direct_links_csv(input_excel, sheet_name, output_csv):
+def read_existing_csv(output_csv):
     """
-    Создание CSV файла с прямыми ссылками на файлы из Excel файла.
+    Чтение существующего CSV файла.
+    """
+    if not os.path.exists(output_csv):
+        return pd.DataFrame(columns=["ID", "phase", "file_name", "link"])
+
+    try:
+        return pd.read_csv(output_csv)
+    except Exception as e:
+        print(f"Ошибка при чтении CSV файла '{output_csv}': {e}")
+        return pd.DataFrame(columns=["ID", "phase", "file_name", "link"])
+
+def check_and_update_csv(input_excel, sheet_name, output_csv):
+    """
+    Проверка и обновление CSV файла с прямыми ссылками на файлы из Excel файла.
 
     :param input_excel: Путь к Excel файлу.
     :param sheet_name: Название листа в Excel файле.
-    :param output_csv: Имя создаваемого файла CSV.
+    :param output_csv: Имя создаваемого или дополняемого файла CSV.
     """
     try:
-        links = extract_links_from_excel(input_excel, sheet_name)
-        print(f"Cоздание CSV файла '{output_csv}'...")
+        excel_data = extract_links_from_excel(input_excel, sheet_name)
+        existing_csv_data = read_existing_csv(output_csv)
 
-        with open(output_csv, 'w', encoding="utf-8", newline="") as csv_file:
+        # Проверяем последний ID в Excel и CSV
+        last_excel_id = excel_data['ID пациента'].max()
+        last_csv_id = existing_csv_data['ID'].max() if not existing_csv_data.empty else 0
+
+        if last_csv_id == last_excel_id:
+            print("Новых записей в Excel нет.")
+            return
+        elif last_csv_id > last_excel_id:
+            print("Проверьте direct_links.csv, в нем лишние записи.")
+            return
+
+        # Отбираем только новые записи
+        new_records = excel_data[excel_data['ID пациента'] > last_csv_id]
+
+        print(f"Добавление новых записей в CSV файл '{output_csv}'...")
+
+        with open(output_csv, 'a', encoding="utf-8", newline="") as csv_file:
             writer = csv.writer(csv_file, delimiter=",")
-            writer.writerow(["ID", "phase", "file_name", "link"]) # Добавляем строку с названиями колонок
 
-            for href in links:
+            # Если файл новый, добавляем заголовок
+            if os.stat(output_csv).st_size == 0:
+                writer.writerow(["ID", "phase", "file_name", "link"])
+
+            for _, row in new_records.iterrows():
+                href = row['Местоположение файлов']
                 try:
                     resource_info = get_resource_info(href)
                     if '_embedded' in resource_info:
@@ -60,7 +89,6 @@ def create_direct_links_csv(input_excel, sheet_name, output_csv):
                         for item in items:
                             if item['type'] == 'file':
                                 folder = item['name'].split("_")[0][2:] if "_" in item['name'] else "Unknown"
-                                # Разделяем строку на основе "_" и обрабатываем последний элемент до точки
                                 if "_" in item['name']:
                                     parts = item['name'].split("_")
                                     if len(parts) > 1:
@@ -74,20 +102,19 @@ def create_direct_links_csv(input_excel, sheet_name, output_csv):
                                 download_link = item['file'] if 'file' in item else None
 
                                 if download_link:
-                                    writer.writerow([folder, phase, filename, download_link])
+                                    writer.writerow([row['ID пациента'], phase, filename, download_link])
                 except Exception as e:
                     print(f"Ошибка обработки ссылки {href}: {e}")
 
-        print(f"CSV файл '{output_csv}' успешно создан.")
+        print(f"Новые записи загружены в '{output_csv}'.")
 
     except Exception as e:
         print(f"Произошла ошибка: {e}")
-
 
 if __name__ == "__main__":
     input_excel = 'База данных МСКТ надпочечников_MP4.xlsx'  # Укажите путь к вашему Excel файлу
     sheet_name = 'Лист1'  # Укажите имя листа в Excel
     output_csv = 'direct_links.csv'  # Имя выходного файла CSV
 
-    create_direct_links_csv(input_excel, sheet_name, output_csv)
+    check_and_update_csv(input_excel, sheet_name, output_csv)
 
