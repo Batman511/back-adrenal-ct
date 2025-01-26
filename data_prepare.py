@@ -213,7 +213,7 @@ def download_files_from_mongo(db_name, collection_name, columns_to_download, mon
                 if not os.path.exists(full_file_path):
                     download_link = record.get(f"Ссылка на {column}", "")
 
-                    if download_link:
+                    if download_link and not (isinstance(download_link, float) and np.isnan(download_link)):
                         # print(f"Скачиваем файл {file_name}")
                         download_file(file_name, download_link, local_path)
                         downloaded_count += 1
@@ -594,7 +594,7 @@ if __name__ == "__main__":
                     collection_name="Data")
 
             case 'test download file by name':
-                file_name = "ID53_ARTERIAL" # название файла для скачивания без типа
+                file_name = "ID164_NATIVE_MASK" # название файла для скачивания без типа
 
                 # Проверка того, что прямые ссылки из csv-файла рабочие, а файлы скачиваются корректно
                 download_file_from_csv(file_name, download_folder='ct_download')
@@ -685,3 +685,13 @@ if __name__ == "__main__":
 
     choice = 'data processing for classification and save'
     user_interface(choice)
+
+    # для удобства запишу все кейсы тут, чтобы не листать
+
+    # create local structure
+    # create MongoDB database
+    # test download file by name
+    # download files from DB to local PC
+    # data processing for classification and save
+    # delete local videos
+    # load of data sets
