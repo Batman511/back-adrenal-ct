@@ -465,15 +465,14 @@ def process_video(video_path, target_size, frame_skip, one_dim=False):
     cap.release()
     return np.array(frames, dtype=np.uint8) if frames else None
 
-def save_npy_arrays(videos, masks, labels, labels_names):
+def save_npy_arrays(videos, masks):
     """
     Сохраняет массивы videos, masks, labels и labels_names в папку 'npy_data_download'.
 
     Аргументы:
         videos (np.array): Массив видео.
         masks (np.array): Массив масок.
-        labels (np.array): Массив меток.
-        labels_names (list): Список имен меток.
+
     """
     download_folder = os.path.join(os.path.dirname(__file__), 'npy_data_download')
 
@@ -482,14 +481,10 @@ def save_npy_arrays(videos, masks, labels, labels_names):
 
     videos_file = os.path.join(download_folder, 'videos.npy')
     masks_file = os.path.join(download_folder, 'masks.npy')
-    labels_file = os.path.join(download_folder, 'labels.npy')
-    labels_names_file = os.path.join(download_folder, 'labels_names.npy')
 
     # Сохранение массивов
     np.save(videos_file, videos)
     np.save(masks_file, masks)
-    np.save(labels_file, labels)
-    np.save(labels_names_file, labels_names)
 
     print(f"Файлы успешно сохранены в папку 'npy_data_download'")
 
@@ -699,7 +694,15 @@ if __name__ == "__main__":
                 # Сохранение файлов
                 UI_save_arrays = True
                 if UI_save_arrays:
-                    save_npy_arrays(videos, masks, labels, labels_names)
+                    # аугментируем массивы зеркальным перед сохранением
+
+                    flipped_videos = np.flip(videos, axis=-1)
+                    flipped_masks = np.flip(masks, axis=-1)
+
+                    videos = np.concatenate((videos, flipped_videos), axis=0)
+                    masks = np.concatenate((masks, flipped_masks), axis=0)
+
+                    save_npy_arrays(videos, masks)
 
             case 'delete local videos':
                 delete_local_videos()
