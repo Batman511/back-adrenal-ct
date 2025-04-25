@@ -465,7 +465,7 @@ def process_video(video_path, target_size, frame_skip, one_dim=False):
     cap.release()
     return np.array(frames, dtype=np.uint8) if frames else None
 
-def save_npy_arrays(videos, masks):
+def save_npy_arrays(videos, masks, labels, labels_names):
     """
     Сохраняет массивы videos, masks, labels и labels_names в папку 'npy_data_download'.
 
@@ -479,12 +479,19 @@ def save_npy_arrays(videos, masks):
     if not os.path.exists(download_folder):
         os.makedirs(download_folder)
 
-    videos_file = os.path.join(download_folder, 'videos.npy')
-    masks_file = os.path.join(download_folder, 'masks.npy')
+    videos_file = os.path.join(download_folder, 'videos_check.npy')
+    masks_file = os.path.join(download_folder, 'masks_check.npy')
+    labels_file = os.path.join(download_folder, 'labels.npy')
+    labels_names_file = os.path.join(download_folder, 'labels_names.npy')
+
+    print(f"Форма массива видео: {videos.shape}")
+    print(f"Форма массива масок: {masks.shape}")
 
     # Сохранение массивов
     np.save(videos_file, videos)
     np.save(masks_file, masks)
+    np.save(labels_file, labels)
+    np.save(labels_names_file, labels_names)
 
     print(f"Файлы успешно сохранены в папку 'npy_data_download'")
 
@@ -661,8 +668,7 @@ if __name__ == "__main__":
                 print(f"Данные подготовлены.")
                 print(f"Форма массива видео: {videos.shape}")
                 print(f"Форма массива масок: {masks.shape}")
-                assert videos.shape[0] == masks.shape[0] == len(labels) == len(
-                    labels_names), "Все массивы должны иметь одинаковое количество элементов по первой оси!"
+                assert videos.shape[0] == masks.shape[0], "Все массивы должны иметь одинаковое количество элементов по первой оси!"
 
                 # Генерация случайного порядка индексов и перемешивание
                 shuffle_indices = np.random.permutation(videos.shape[0])
@@ -694,15 +700,8 @@ if __name__ == "__main__":
                 # Сохранение файлов
                 UI_save_arrays = True
                 if UI_save_arrays:
-                    # аугментируем массивы зеркальным перед сохранением
 
-                    flipped_videos = np.flip(videos, axis=-1)
-                    flipped_masks = np.flip(masks, axis=-1)
-
-                    videos = np.concatenate((videos, flipped_videos), axis=0)
-                    masks = np.concatenate((masks, flipped_masks), axis=0)
-
-                    save_npy_arrays(videos, masks)
+                    save_npy_arrays(videos, masks, labels, labels_names)
 
             case 'delete local videos':
                 delete_local_videos()
@@ -711,15 +710,11 @@ if __name__ == "__main__":
                 load_folder = os.path.join(os.path.dirname(__file__), 'npy_data_download')
                 assert os.path.exists(load_folder), "Папка npy_data_download не найдена!"
 
-                videos_file = os.path.join(load_folder, 'videos.npy')
-                masks_file = os.path.join(load_folder, 'masks.npy')
-                labels_file = os.path.join(load_folder, 'labels.npy')
-                labels_names_file = os.path.join(load_folder, 'labels_names.npy')
+                videos_file = os.path.join(load_folder, 'videos_check.npy')
+                masks_file = os.path.join(load_folder, 'masks_check.npy')
 
                 videos = np.load(videos_file)
                 masks = np.load(masks_file)
-                labels = np.load(labels_file)
-                labels_names = np.load(labels_names_file)
 
                 print(f"Форма массива видео: {videos.shape}")
                 print(f"Форма массива масок: {masks.shape}")
@@ -727,6 +722,14 @@ if __name__ == "__main__":
             case _:
                 print("Неизвестный выбор.")
 
+# запуск в таком порядке после очистки монго дб
+
+    choice = 'create local structure'
+    user_interface(choice)
+    choice = 'create MongoDB database'
+    user_interface(choice)
+    choice = 'download files from DB to local PC'
+    user_interface(choice)
     choice = 'data processing for segmentation and save'
     user_interface(choice)
 
