@@ -3,6 +3,7 @@ import requests
 import csv
 from urllib.parse import urlencode
 import os
+from tqdm import tqdm
 
 def get_resource_info(public_link):
     """
@@ -80,7 +81,7 @@ def check_and_update_csv(input_excel, sheet_name, output_csv):
             if os.stat(output_csv).st_size == 0:
                 writer.writerow(["ID", "phase", "file_name", "link"])
 
-            for _, row in new_records.iterrows():
+            for _, row in tqdm(new_records.iterrows(), leave=True, total=len(new_records)):
                 href = row['Местоположение файлов']
                 try:
                     resource_info = get_resource_info(href)
